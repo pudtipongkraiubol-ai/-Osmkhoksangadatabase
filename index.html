@@ -1,1 +1,1470 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ฐานข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า</title>
+
+<!-- Fonts: Sarabun is the official Thai government typeface, Kanit for display weight -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Kanit:wght@500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+<!-- Firebase (compat SDK, easiest to wire up with a copy-pasted config) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+
+<!-- Chart.js for the dashboard pie chart -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.3/chart.umd.min.js"></script>
+
+<!-- html2pdf for PDF export (renders the DOM, so Thai text works with no font-embedding headaches) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<style>
+:root{
+  --navy:#22336b;
+  --navy-deep:#182552;
+  --blue:#a9c2e6;
+  --blue-soft:#eef3fb;
+  --red:#e2231a;
+  --red-soft:#fdeceb;
+  --ink:#1b2440;
+  --paper:#f5f7fb;
+  --line:#dfe6f2;
+  --white:#ffffff;
+  --ok:#1f9d55;
+  --warn:#c78a00;
+  --shadow: 0 6px 24px rgba(24,37,82,.08);
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:'Sarabun',sans-serif;
+  background:var(--paper);
+  color:var(--ink);
+  min-height:100vh;
+}
+h1,h2,h3,.brand,.stat-num,.nav-label,.btn{font-family:'Kanit',sans-serif;}
+::selection{background:var(--blue);}
+
+/* ---------- layout shell ---------- */
+.app{display:flex; min-height:100vh;}
+.sidebar{
+  width:250px; flex-shrink:0;
+  background:linear-gradient(180deg,var(--navy-deep),var(--navy) 70%);
+  color:#fff; display:flex; flex-direction:column;
+  position:fixed; top:0; bottom:0; left:0;
+  z-index:40; transition:transform .25s ease;
+}
+.sidebar .brand-wrap{
+  display:flex; align-items:center; gap:12px;
+  padding:22px 18px 18px; border-bottom:1px solid rgba(255,255,255,.12);
+}
+.sidebar .brand-wrap img{width:46px;height:46px;border-radius:50%;box-shadow:0 0 0 2px rgba(255,255,255,.5);}
+.sidebar .brand{font-size:15px; line-height:1.35; font-weight:600;}
+.sidebar .brand small{display:block;font-family:'Sarabun',sans-serif;font-weight:400;font-size:11.5px;opacity:.75;margin-top:2px;}
+
+.nav{padding:14px 10px; display:flex; flex-direction:column; gap:4px; flex:1; overflow-y:auto;}
+.nav-item{
+  display:flex; align-items:center; gap:12px;
+  padding:11px 14px; border-radius:10px; cursor:pointer;
+  color:rgba(255,255,255,.82); font-size:14.5px; font-weight:500;
+  border:1px solid transparent; user-select:none;
+}
+.nav-item:hover{background:rgba(255,255,255,.08); color:#fff;}
+.nav-item.active{background:var(--red); color:#fff; box-shadow:0 4px 14px rgba(226,35,26,.35);}
+.nav-item .ic{width:20px;text-align:center;font-size:16px;}
+.sidebar-foot{padding:14px 18px; font-size:11px; color:rgba(255,255,255,.5); border-top:1px solid rgba(255,255,255,.1);}
+
+.menu-btn{display:none;}
+
+.main{margin-left:250px; flex:1; min-width:0; display:flex; flex-direction:column;}
+.topbar{
+  background:#fff; border-bottom:1px solid var(--line);
+  padding:16px 26px; display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:20;
+}
+.topbar h1{margin:0; font-size:19px; color:var(--navy-deep); font-weight:600;}
+.topbar .sub{font-size:12.5px; color:#7280a3; margin-top:2px; font-weight:400; font-family:'Sarabun',sans-serif;}
+.conn{display:flex;align-items:center;gap:7px;font-size:12px;color:#7280a3;}
+.dot{width:8px;height:8px;border-radius:50%;background:#c8ccd8;}
+.dot.on{background:var(--ok);}
+.dot.off{background:var(--red);}
+
+.content{padding:24px 26px 60px; max-width:1280px; width:100%; margin:0 auto;}
+.page{display:none;}
+.page.active{display:block; animation:fadein .25s ease;}
+@keyframes fadein{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+/* ---------- shared bits ---------- */
+.card{background:#fff; border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow);}
+.card-pad{padding:20px;}
+.section-title{display:flex; align-items:center; justify-content:space-between; margin:26px 0 12px;}
+.section-title:first-child{margin-top:0;}
+.section-title h2{margin:0; font-size:16px; color:var(--navy-deep); font-weight:600;}
+.section-title .hint{font-size:12px;color:#8592b0;font-weight:400;font-family:'Sarabun',sans-serif;margin-top:2px;}
+
+.btn{
+  border:none; border-radius:9px; padding:10px 16px; font-size:14px; font-weight:500;
+  cursor:pointer; display:inline-flex; align-items:center; gap:7px; transition:.15s;
+}
+.btn-primary{background:var(--navy); color:#fff;}
+.btn-primary:hover{background:var(--navy-deep);}
+.btn-red{background:var(--red); color:#fff;}
+.btn-red:hover{background:#c81c14;}
+.btn-outline{background:#fff; border:1px solid var(--line); color:var(--navy);}
+.btn-outline:hover{background:var(--blue-soft);}
+.btn-ghost{background:transparent;color:#7280a3;}
+.btn-ghost:hover{background:#f0f2f8;}
+.btn-sm{padding:6px 11px;font-size:12.5px;border-radius:7px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+
+.filter-bar{
+  display:flex; flex-wrap:wrap; gap:10px; align-items:end;
+  background:#fff; border:1px solid var(--line); border-radius:14px; padding:16px 18px; box-shadow:var(--shadow);
+}
+.field{display:flex; flex-direction:column; gap:5px;}
+.field label{font-size:12px; color:#5b6688; font-weight:500;}
+select,input[type=text],input[type=date],input[type=number],input[type=tel],input[type=password],input[type=email],textarea{
+  font-family:'Sarabun',sans-serif; border:1px solid var(--line); border-radius:8px;
+  padding:9px 11px; font-size:14px; color:var(--ink); background:#fff; outline:none;
+}
+select:focus,input:focus,textarea:focus{border-color:var(--navy);}
+textarea{resize:vertical; min-height:80px;}
+
+.stat-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px;}
+.stat-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;box-shadow:var(--shadow); position:relative; overflow:hidden;}
+.stat-card::before{content:"";position:absolute;top:0;left:0;width:5px;height:100%;background:var(--accent,var(--navy));}
+.stat-label{font-size:12.5px;color:#6b7594;font-weight:500;}
+.stat-num{font-size:30px;font-weight:600;color:var(--ink);margin-top:6px;}
+.stat-unit{font-size:12px;color:#93a0c2;font-weight:400;font-family:'Sarabun',sans-serif;}
+
+.two-col{display:grid; grid-template-columns:1.3fr 1fr; gap:16px;}
+@media(max-width:900px){.two-col{grid-template-columns:1fr;}}
+
+table{width:100%; border-collapse:collapse; font-size:13.5px;}
+th,td{padding:11px 12px; text-align:left; border-bottom:1px solid var(--line);}
+th{background:var(--blue-soft); color:var(--navy-deep); font-weight:600; font-size:12.5px; position:sticky; top:0;}
+tr:hover td{background:#f9fafd;}
+.table-wrap{overflow-x:auto; border-radius:12px; border:1px solid var(--line);}
+.pill{display:inline-block; padding:3px 10px; border-radius:99px; font-size:11.5px; font-weight:500;}
+.pill-ok{background:#e5f6ec;color:var(--ok);}
+.pill-warn{background:#fff4e0;color:var(--warn);}
+.pill-red{background:var(--red-soft);color:var(--red);}
+.pill-blue{background:var(--blue-soft);color:var(--navy);}
+
+.empty{padding:40px 20px; text-align:center; color:#93a0c2; font-size:13.5px;}
+.empty .ic{font-size:32px; display:block; margin-bottom:8px;}
+
+/* modal */
+.overlay{position:fixed;inset:0;background:rgba(20,26,50,.5);display:none;align-items:center;justify-content:center;z-index:100;padding:20px;}
+.overlay.active{display:flex;}
+.modal{background:#fff;border-radius:16px;max-width:640px;width:100%;max-height:88vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.25);}
+.modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff;border-radius:16px 16px 0 0;}
+.modal-head h3{margin:0;font-size:16px;color:var(--navy-deep);}
+.modal-body{padding:20px 22px;}
+.modal-foot{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;}
+.x-close{background:none;border:none;font-size:20px;color:#93a0c2;cursor:pointer;line-height:1;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+@media(max-width:560px){.grid2{grid-template-columns:1fr;}}
+.grid2 .field.full{grid-column:1/-1;}
+fieldset{border:1px solid var(--line); border-radius:10px; padding:14px 14px 10px; margin:0 0 14px;}
+legend{font-size:12.5px; font-weight:600; color:var(--navy); padding:0 6px;}
+.radio-row{display:flex; gap:16px; align-items:center; padding:6px 0;}
+.radio-row label{display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer;}
+
+.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:8px;}
+.toast{background:var(--navy-deep);color:#fff;padding:12px 18px;border-radius:10px;font-size:13.5px;box-shadow:0 8px 24px rgba(0,0,0,.2);animation:toastin .2s ease;}
+.toast.err{background:var(--red);}
+.toast.ok{background:var(--ok);}
+@keyframes toastin{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+.detail-list{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;}
+.detail-item{padding:10px 0;border-bottom:1px dashed var(--line);}
+.detail-item .k{font-size:11.5px;color:#8592b0;font-weight:500;}
+.detail-item .v{font-size:14.5px;color:var(--ink);margin-top:2px;font-weight:500;}
+@media(max-width:560px){.detail-list{grid-template-columns:1fr;}}
+
+.search-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;}
+.search-row input{flex:1;min-width:200px;}
+
+.setup-banner{background:#fff4e0;border:1px solid #f2d38a;color:#7a5900;border-radius:12px;padding:14px 18px;font-size:13px;margin-bottom:18px;display:none;}
+.setup-banner.show{display:block;}
+.setup-banner code{background:#fff;padding:1px 6px;border-radius:5px;border:1px solid #f2d38a;}
+
+/* printable report canvas (off-screen, used by html2pdf) */
+#report-canvas{position:fixed; left:-9999px; top:0; width:794px; background:#fff; color:#1b2440; font-family:'Sarabun',sans-serif;}
+.rp-head{display:flex;align-items:center;gap:16px;border-bottom:3px solid var(--navy);padding-bottom:14px;margin-bottom:18px;}
+.rp-head img{width:64px;height:64px;border-radius:50%;}
+.rp-head h1{font-size:18px;margin:0;color:var(--navy-deep);font-family:'Kanit',sans-serif;}
+.rp-head p{font-size:12.5px;margin:2px 0 0;color:#5b6688;}
+.rp-meta{font-size:12px;color:#5b6688;margin-bottom:14px;}
+.rp-section-title{font-size:14px;font-weight:600;color:var(--navy-deep);margin:16px 0 8px;font-family:'Kanit',sans-serif;}
+.rp-table{width:100%;border-collapse:collapse;font-size:11.5px;}
+.rp-table th,.rp-table td{border:1px solid #c9d3e8;padding:6px 8px;text-align:left;}
+.rp-table th{background:var(--blue-soft);}
+.rp-stat-row{display:flex;gap:10px;margin-bottom:10px;}
+.rp-stat{flex:1;border:1px solid var(--line);border-radius:8px;padding:10px 12px;}
+.rp-stat .k{font-size:11px;color:#5b6688;}
+.rp-stat .v{font-size:20px;font-weight:600;color:var(--navy-deep);}
+.rp-foot{margin-top:30px;font-size:12px;color:#5b6688;display:flex;justify-content:space-between;}
+.rp-sign{margin-top:50px;text-align:center;font-size:12.5px;}
+.rp-sign .line{margin-bottom:6px;}
+
+@media(max-width:980px){
+  .sidebar{transform:translateX(-100%);}
+  .sidebar.open{transform:translateX(0);}
+  .main{margin-left:0;}
+  .menu-btn{display:inline-flex;background:none;border:none;font-size:22px;color:var(--navy-deep);cursor:pointer;margin-right:10px;}
+  .scrim{display:none;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:30;}
+  .scrim.show{display:block;}
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== SIDEBAR ===== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand-wrap">
+      <img src="data:image/png;base64,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" alt="โลโก้ อสม.">
+      <div class="brand">โรงเรียน อสม.<small>รพ.สต.บ้านโคกสง่า</small></div>
+    </div>
+    <nav class="nav" id="navList">
+      <div class="nav-item active" data-page="dashboard"><span class="ic">📊</span><span class="nav-label">Dashboard</span></div>
+      <div class="nav-item" data-page="asm"><span class="ic">🗂️</span><span class="nav-label">ข้อมูล อสม.</span></div>
+      <div class="nav-item" data-page="attend"><span class="ic">✍️</span><span class="nav-label">ลงชื่อเข้าร่วม รร.</span></div>
+      <div class="nav-item" data-page="meeting"><span class="ic">📝</span><span class="nav-label">บันทึกรายงานการประชุม</span></div>
+      <div class="nav-item" data-page="report"><span class="ic">🖨️</span><span class="nav-label">ออกรายงาน</span></div>
+    </nav>
+    <div class="sidebar-foot">โรงเรียนอาสาสมัครสาธารณสุขประจำหมู่บ้าน<br>ตำบลดงหม้อทองใต้ อ.บ้านม่วง จ.สกลนคร</div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <!-- ===== MAIN ===== -->
+  <div class="main">
+    <div class="topbar">
+      <div style="display:flex;align-items:center;">
+        <button class="menu-btn" id="menuBtn">☰</button>
+        <div>
+          <h1 id="pageTitle">Dashboard</h1>
+          <div class="sub" id="pageSub">ภาพรวมข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า</div>
+        </div>
+      </div>
+      <div class="conn"><span class="dot" id="connDot"></span><span id="connText">กำลังเชื่อมต่อ...</span></div>
+    </div>
+
+    <div class="content">
+      <div class="setup-banner" id="setupBanner">
+        ⚠️ ยังไม่ได้ตั้งค่า Firebase — ระบบกำลังทำงานแบบชั่วคราวในเบราว์เซอร์นี้เท่านั้น (ข้อมูลจะหายเมื่อปิดหน้าเว็บ)
+        กรุณาใส่ค่า <code>firebaseConfig</code> ของคุณในไฟล์ index.html (ค้นหาคำว่า <code>PASTE YOUR FIREBASE CONFIG HERE</code>)
+      </div>
+
+      <!-- PAGE: DASHBOARD -->
+      <section class="page active" id="page-dashboard"></section>
+
+      <!-- PAGE: ASM DATA -->
+      <section class="page" id="page-asm"></section>
+
+      <!-- PAGE: ATTEND -->
+      <section class="page" id="page-attend"></section>
+
+      <!-- PAGE: MEETING -->
+      <section class="page" id="page-meeting"></section>
+
+      <!-- PAGE: REPORT -->
+      <section class="page" id="page-report"></section>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"><div class="modal" id="modalBox"></div></div>
+<div class="toast-wrap" id="toastWrap"></div>
+<div id="report-canvas"></div>
+
+<script>
+/* =====================================================================
+   ฐานข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า
+   ---------------------------------------------------------------------
+   วิธีตั้งค่า (สำคัญ ทำก่อนใช้งานจริง):
+   1) สร้างโปรเจกต์ที่ https://console.firebase.google.com
+      -> เปิดใช้ "Firestore Database" (โหมด production ก็ได้)
+      -> เปิดใช้ "Authentication" > Sign-in method > Anonymous (เปิดใช้งาน)
+      -> ไปที่ Project settings > General > Your apps > สร้าง Web App
+      -> คัดลอกค่า firebaseConfig มาวางแทนที่ตัวแปร firebaseConfig ด้านล่าง
+   2) สมัครฟรีที่ https://api.imgbb.com/ เพื่อรับ API Key
+      -> นำ Key มาใส่ในตัวแปร IMGBB_API_KEY ด้านล่าง (ใช้สำหรับแนบรูปถ่าย อสม. ถ้าต้องการ)
+   3) ตั้งค่า Firestore Rules ให้อนุญาตผู้ใช้ที่ auth แล้ว เช่น:
+      rules_version = '2';
+      service cloud.firestore {
+        match /databases/{database}/documents {
+          match /{document=**} {
+            allow read, write: if request.auth != null;
+          }
+        }
+      }
+   ถ้ายังไม่ตั้งค่า Firebase ระบบจะทำงานแบบ "โหมดชั่วคราว" อัตโนมัติ
+   (เก็บข้อมูลใน localStorage ของเบราว์เซอร์นี้เท่านั้น เพื่อให้ทดลองใช้งานได้ก่อน)
+   ===================================================================== */
+
+// ---------- FIREBASE CONFIG ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyCZQ5W3cn6N7EakvdknWDZ42vxZKm0N6WA",
+  authDomain: "khoksanga-6261f.firebaseapp.com",
+  projectId: "khoksanga-6261f",
+  storageBucket: "khoksanga-6261f.firebasestorage.app",
+  messagingSenderId: "575431669011",
+  appId: "1:575431669011:web:38f23cc1e3f1cd18a516e6",
+  measurementId: "G-D5XCDLH1JE"
+};
+// ---------- IMGBB API KEY ----------
+const IMGBB_API_KEY = "2b23cc2206f1987ace1cdd0dad104ed5";
+
+const FIREBASE_ENABLED = !!(firebaseConfig && firebaseConfig.apiKey);
+
+let fbApp = null, fbDb = null, fbAuth = null;
+if (FIREBASE_ENABLED) {
+  try {
+    fbApp = firebase.initializeApp(firebaseConfig);
+    fbDb = firebase.firestore();
+    fbAuth = firebase.auth();
+  } catch (e) { console.error("Firebase init error", e); }
+}
+
+/* ---------------------------------------------------------------------
+   DB abstraction — same API whether backed by Firestore or localStorage
+   --------------------------------------------------------------------- */
+const LOCAL_PREFIX = "asm_school_db_";
+function localGetAll(col) {
+  try { return JSON.parse(localStorage.getItem(LOCAL_PREFIX + col) || "[]"); }
+  catch (e) { return []; }
+}
+function localSaveAll(col, arr) {
+  localStorage.setItem(LOCAL_PREFIX + col, JSON.stringify(arr));
+}
+function uid() {
+  return 'id_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 9);
+}
+
+const DB = {
+  ready: false,
+  async init() {
+    if (FIREBASE_ENABLED && fbAuth) {
+      await new Promise((resolve) => {
+        fbAuth.onAuthStateChanged(user => {
+          if (user) { this.ready = true; resolve(); }
+          else { fbAuth.signInAnonymously().catch(err => { console.error(err); this.ready = true; resolve(); }); }
+        });
+      });
+    } else {
+      this.ready = true;
+    }
+    return this.ready;
+  },
+  async list(col) {
+    if (FIREBASE_ENABLED && fbDb) {
+      const snap = await fbDb.collection(col).get();
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+    return localGetAll(col);
+  },
+  async add(col, obj) {
+    if (FIREBASE_ENABLED && fbDb) {
+      const ref = await fbDb.collection(col).add(obj);
+      return ref.id;
+    }
+    const arr = localGetAll(col);
+    const id = uid();
+    arr.push({ id, ...obj });
+    localSaveAll(col, arr);
+    return id;
+  },
+  async set(col, id, obj) {
+    if (FIREBASE_ENABLED && fbDb) {
+      await fbDb.collection(col).doc(id).set(obj, { merge: true });
+      return;
+    }
+    const arr = localGetAll(col);
+    const idx = arr.findIndex(x => x.id === id);
+    if (idx >= 0) arr[idx] = { ...arr[idx], ...obj, id };
+    else arr.push({ id, ...obj });
+    localSaveAll(col, arr);
+  },
+  async remove(col, id) {
+    if (FIREBASE_ENABLED && fbDb) {
+      await fbDb.collection(col).doc(id).delete();
+      return;
+    }
+    const arr = localGetAll(col).filter(x => x.id !== id);
+    localSaveAll(col, arr);
+  },
+  async seedIfEmpty(col, rows) {
+    const existing = await this.list(col);
+    if (existing.length > 0) return;
+    if (FIREBASE_ENABLED && fbDb) {
+      const batchSize = 400;
+      for (let i = 0; i < rows.length; i += batchSize) {
+        const batch = fbDb.batch();
+        rows.slice(i, i + batchSize).forEach(r => {
+          const ref = fbDb.collection(col).doc();
+          batch.set(ref, r);
+        });
+        await batch.commit();
+      }
+    } else {
+      const arr = rows.map(r => ({ id: uid(), ...r }));
+      localSaveAll(col, arr);
+    }
+  }
+};
+
+/* ---------------------------------------------------------------------
+   Utilities
+   --------------------------------------------------------------------- */
+const THAI_MONTHS = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+  "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+
+function currentBEYear() { return new Date().getFullYear() + 543; }
+function adToBE(adYear) { return adYear + 543; }
+function beToAD(beYear) { return beYear - 543; }
+
+function isoToThaiDate(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso + "T00:00:00");
+  if (isNaN(d)) return iso;
+  return `${d.getDate()} ${THAI_MONTHS[d.getMonth() + 1]} ${adToBE(d.getFullYear())}`;
+}
+function nowIsoDate() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function esc(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function toast(msg, type = "") {
+  const wrap = document.getElementById("toastWrap");
+  const el = document.createElement("div");
+  el.className = "toast" + (type ? " " + type : "");
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+function openModal(html) {
+  document.getElementById("modalBox").innerHTML = html;
+  document.getElementById("overlay").classList.add("active");
+}
+function closeModal() {
+  document.getElementById("overlay").classList.remove("active");
+  document.getElementById("modalBox").innerHTML = "";
+}
+document.getElementById("overlay").addEventListener("click", (e) => {
+  if (e.target.id === "overlay") closeModal();
+});
+
+/* build BE year options for selects */
+function yearOptions(selected) {
+  const cur = currentBEYear();
+  let out = "";
+  for (let y = cur - 5; y <= cur + 1; y++) {
+    out += `<option value="${y}" ${y === selected ? "selected" : ""}>พ.ศ. ${y}</option>`;
+  }
+  return out;
+}
+function monthOptions(selected) {
+  let out = `<option value="all" ${selected === "all" ? "selected" : ""}>ทุกเดือน</option>`;
+  for (let m = 1; m <= 12; m++) {
+    out += `<option value="${m}" ${String(m) === String(selected) ? "selected" : ""}>${THAI_MONTHS[m]}</option>`;
+  }
+  return out;
+}
+function dayOptions(selected) {
+  let out = `<option value="all" ${selected === "all" ? "selected" : ""}>ทุกวัน</option>`;
+  for (let d = 1; d <= 31; d++) {
+    out += `<option value="${d}" ${String(d) === String(selected) ? "selected" : ""}>วันที่ ${d}</option>`;
+  }
+  return out;
+}
+/* returns [startIsoDate, endIsoDate] inclusive, given BE year + month(1-12|'all') + day(1-31|'all') */
+function computeRange(beYear, month, day) {
+  const adYear = beToAD(Number(beYear));
+  if (month === "all") {
+    return [`${adYear}-01-01`, `${adYear}-12-31`];
+  }
+  const m = Number(month);
+  if (day === "all") {
+    const lastDay = new Date(adYear, m, 0).getDate();
+    const pad = n => String(n).padStart(2, '0');
+    return [`${adYear}-${pad(m)}-01`, `${adYear}-${pad(m)}-${pad(lastDay)}`];
+  }
+  const pad = n => String(n).padStart(2, '0');
+  const iso = `${adYear}-${pad(m)}-${pad(Number(day))}`;
+  return [iso, iso];
+}
+function inRange(iso, start, end) {
+  return iso >= start && iso <= end;
+}
+
+
+const ASM_SEED = [{"no":1,"name":"นางสาวนภาชล ตนทา","gender":"หญิง","idcard":"3471000345841","houseNo":"137","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"064-1169399","birth":"04/12/2526","age":39,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":2,"name":"นายพิน ศรีวะลา","gender":"ชาย","idcard":"5471090000534","houseNo":"135","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"085-5640869","birth":"07/01/2500","age":66,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":3,"name":"นางอรัญญา ค้อมสิงห์","gender":"หญิง","idcard":"3471000339549","houseNo":"89","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-0731409","birth":"06/10/2515","age":51,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":4,"name":"นางเจริญ ศรีตาแสง","gender":"หญิง","idcard":"4471000003280","houseNo":"56","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-4260602","birth":"04/03/2504","age":62,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":5,"name":"นางบุญโฮม แสนศรี","gender":"หญิง","idcard":"3471000336205","houseNo":"43","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"065-1068731","birth":"07/01/2502","age":64,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":6,"name":"นายจรูญ สิงห์ไชย","gender":"ชาย","idcard":"3410200423593","houseNo":"79","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-3450342","birth":"20/11/2511","age":54,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":7,"name":"นายสุดตา ลาดบัวขาว","gender":"ชาย","idcard":"3471000337848","houseNo":"99","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-0053593","birth":"23/09/2502","age":64,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":8,"name":"นายกิจ อนุสุริยา","gender":"ชาย","idcard":"3471000408184","houseNo":"46","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-9303963","birth":"04/04/2500","age":66,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":9,"name":"นายสุวิทย์ พินิจมนตรี","gender":"ชาย","idcard":"3471000335471","houseNo":"67","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-9233768","birth":"03/11/2500","age":65,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":10,"name":"นางสาวรจนีย์ อุปพระจันทร์","gender":"หญิง","idcard":"1470100015870","houseNo":"16","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"062-1561778","birth":"25/02/2527","age":39,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":11,"name":"นายบุญกว้าง อรังศรี","gender":"ชาย","idcard":"3450101379227","houseNo":"160","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"088-9106194","birth":"15/06/2510","age":56,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":12,"name":"นางรุจิฬาณี อุปชาใต้","gender":"หญิง","idcard":"3471000349897","houseNo":"16","moo":"1","village":"บ้านโคกสง่า หมู่ 1","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-0304029","birth":"25/02/2525","age":42,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":13,"name":"นางไพรัตน์ สุกสวาท","gender":"หญิง","idcard":"3471000383564","houseNo":"225","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"083-7741390","birth":"19/10/2517","age":49,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":14,"name":"นางจันทร์ดี ถิ่นมา","gender":"หญิง","idcard":"3471000384455","houseNo":"28","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-8743197","birth":"05/01/2519","age":47,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":15,"name":"นางพานทิพย์ สายสมอน","gender":"หญิง","idcard":"3471000385249","houseNo":"42","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"084-9399882","birth":"31/05/2518","age":48,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":16,"name":"นายคำบ่อ ศรีวิเศษ","gender":"ชาย","idcard":"3471000382525","houseNo":"4","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"081-3696203","birth":"15/08/2479","age":87,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":17,"name":"นายไสว แพงพา","gender":"ชาย","idcard":"3471000385842","houseNo":"50","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"095-2403316","birth":"19/10/2491","age":75,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":18,"name":"นายวารี ศรีวิเศษ","gender":"ชาย","idcard":"3471000390650","houseNo":"142","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-2247168","birth":"09/09/2500","age":66,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":19,"name":"นายมณีรัตน์ หาริตะวัน","gender":"ชาย","idcard":"3471000119115","houseNo":"108","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"092-3484173","birth":"13/10/2511","age":55,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":20,"name":"นางเปลว สีเขียว","gender":"หญิง","idcard":"3471000389015","houseNo":"246","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"062-1355808","birth":"06/02/2500","age":66,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":21,"name":"นางบังอร คนเพียร","gender":"หญิง","idcard":"3471000385362","houseNo":"223","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"086-0123124,099-6285657","birth":"29/09/2518","age":48,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":22,"name":"นางจันทร์ เยาวะนิตย์","gender":"หญิง","idcard":"3-4710-00400-16-7","houseNo":"149","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"064-2076642","birth":"21/04/2521","age":45,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":23,"name":"นางสมภีร์ ประวิเศษ","gender":"หญิง","idcard":"3471000387179","houseNo":"237","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"095-4695948","birth":"07/12/2516","age":49,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":24,"name":"นายดลวัฒน์ โพธิ์พรม","gender":"ชาย","idcard":"1471000055871","houseNo":"161","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"096-1967389,086-4632026","birth":"09/11/2529","age":36,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":25,"name":"นางมณี ศรีหา","gender":"หญิง","idcard":"3471000387195","houseNo":"168","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"083-5375894","birth":"07/08/2514","age":52,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":26,"name":"นายวันนา ทฤษฎี","gender":"ชาย","idcard":"3471000387250","houseNo":"77","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"092-9293327","birth":"10/01/2506","age":60,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":27,"name":"นายสมชาย ศรีเชียงใหม่","gender":"ชาย","idcard":"5471000006546","houseNo":"79","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"063-9479219","birth":"01/01/2498","age":68,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":28,"name":"นายดุสิทธิ์ บุญจำรัส","gender":"ชาย","idcard":"3670200785582","houseNo":"240","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"086-3265180","birth":"01/05/2520","age":46,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":29,"name":"นางพวงเพชร ยอดตา","gender":"หญิง","idcard":"3471000386849","houseNo":"69","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-6454014","birth":"23/08/2518","age":48,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":30,"name":"นางพัศริน ศรีชัย","gender":"หญิง","idcard":"3471000385907","houseNo":"172","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"083-7933102","birth":"15/08/2516","age":50,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":31,"name":"นางฉวีวัน ศรีวะรา","gender":"หญิง","idcard":"3471000390561","houseNo":"270","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-5751167","birth":"07/06/2514","age":52,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":32,"name":"นางนพรัตน์ ผดุงภักดี","gender":"หญิง","idcard":"3471000385923","houseNo":"191","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"064-2747708","birth":"31/12/2514","age":52,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":33,"name":"นางสาวติ๋ม สิงห์ทอง","gender":"หญิง","idcard":"3471000388264","houseNo":"203","moo":"3","village":"บ้านโคกสง่า หมู่ 3","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"095-7234635","birth":"01/04/2514","age":52,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":34,"name":"นางดอกไม้ สินชัย","gender":"หญิง","idcard":"3471000448208","houseNo":"81","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-4092191","birth":"28/07/2513","age":53,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":35,"name":"นายเตย พรมโคตร","gender":"ชาย","idcard":"3471000351620","houseNo":"14","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"062-4463459","birth":"30/04/2502","age":64,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":36,"name":"นางสาวอนงค์ สุขเหลือง","gender":"หญิง","idcard":"3471000449891","houseNo":"105","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-0264331","birth":"24/04/2519","age":47,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":37,"name":"นางสาววรรณี แสนศรี","gender":"หญิง","idcard":"3471000448682","houseNo":"89","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-1254533","birth":"03/04/2523","age":43,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":38,"name":"น.ส.กาญจนา สุขเหลือง","gender":"หญิง","idcard":"3471000309534","houseNo":"132","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"063-6180013","birth":"19/09/2525","age":41,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":39,"name":"นางรุ่งราวัณย์ สองศรี","gender":"หญิง","idcard":"3471000398936","houseNo":"107","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"097-9684163","birth":"01/01/2518","age":48,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":40,"name":"นางสาวมลิสา ศรีจันทร์","gender":"หญิง","idcard":"1471000145578","houseNo":"254","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-5789502","birth":"22/06/2538","age":28,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":41,"name":"นายประหยัด พลเจริญ","gender":"ชาย","idcard":"3471000309704","houseNo":"136","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"087-2373613","birth":"08/08/2500","age":66,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":42,"name":"นางหนูไกร กิขุนทด","gender":"หญิง","idcard":"3430600136656","houseNo":"90","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-5542570","birth":"12/02/2512","age":54,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":43,"name":"นายสมาน ปากดีศรี","gender":"ชาย","idcard":"3471000447601","houseNo":"73","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-9496319","birth":"22/12/2510","age":55,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":44,"name":"นายเติม อุสหธรรม","gender":"ชาย","idcard":"4471000002089","houseNo":"50","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-6837848","birth":"16/02/2513","age":53,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":45,"name":"นายสายันต์ หนองขุ่นสาร","gender":"ชาย","idcard":"3430600498337","houseNo":"28","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-6212848","birth":"28/06/2512","age":54,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":46,"name":"นายสุพจน์ สอนเชียงคำ","gender":"ชาย","idcard":"3430300022531","houseNo":"119","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-7189055","birth":"17/02/2512","age":55,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":47,"name":"นางแก้วใจ อินหา","gender":"หญิง","idcard":"3471000447015","houseNo":"33","moo":"5","village":"บ้านโคกสง่า หมู่ 5","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"080-1863786","birth":"16/04/2520","age":46,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":48,"name":"นางพัชรี สุภาษา","gender":"หญิง","idcard":"3471000340067","houseNo":"186","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"080-1749294","birth":"14/04/2511","age":55,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":49,"name":"นางสายฝน พรมนาม","gender":"หญิง","idcard":"5470890000554","houseNo":"161","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"081-2563579","birth":"23/05/2520","age":46,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":50,"name":"นายบุญเพ็ง ยนะโชติ","gender":"ชาย","idcard":"3450800051387","houseNo":"5","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-4370712,0803865104","birth":"22/12/2501","age":64,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":51,"name":"นายสุภาพ ดาราช","gender":"ชาย","idcard":"5100500006024","houseNo":"157","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"090-3569103","birth":"22/01/2504","age":62,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":52,"name":"นายโชคชัย เยาวเสริฐ","gender":"ชาย","idcard":"3471000348602","houseNo":"104","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"065-5796553","birth":"06/07/2497","age":69,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":53,"name":"นายนิยม วงค์ศิลปชัย","gender":"ชาย","idcard":"3471000348408","houseNo":"154","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"084-2190857","birth":"20/08/2505","age":61,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":54,"name":"นายสุบิน สุวรรณศรี","gender":"ชาย","idcard":"3471000337554","houseNo":"131","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-5930969","birth":"05/11/2498","age":67,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":55,"name":"นางมะลิวรรณ ประจันทา","gender":"หญิง","idcard":"3471000342825","houseNo":"71","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-5264442","birth":"05/07/2519","age":47,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":56,"name":"นางเข็มพร กัลยาประสิทธิ์","gender":"หญิง","idcard":"3471000339701","houseNo":"75","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"099-6278490","birth":"18/06/2505","age":61,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":57,"name":"นายวีรสิทธิ์ พานสง่า","gender":"ชาย","idcard":"3410601173008","houseNo":"67","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"091-8657836","birth":"30/10/2513","age":53,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":58,"name":"นางวงค์เดือน วันมะรักษา","gender":"หญิง","idcard":"3471000339166","houseNo":"139","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-6059270","birth":"16/08/2519","age":47,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":59,"name":"นายปรีชา ชาวดง","gender":"ชาย","idcard":"3471000338151","houseNo":"77","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-4958107","birth":"15/01/2507","age":59,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":60,"name":"นายสุนทร ว่องไว","gender":"ชาย","idcard":"3471000344828","houseNo":"90","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"092-9275132","birth":"14/07/2511","age":55,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":61,"name":"นางแสงจันทร์ มัสรินทร์","gender":"หญิง","idcard":"5471090004831","houseNo":"74","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"064-1207026","birth":"06/03/2501","age":65,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":62,"name":"นางเลียบ วงค์ศิลปชัย","gender":"หญิง","idcard":"4471000003344","houseNo":"89","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-3269220","birth":"02/01/2501","age":65,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":63,"name":"นางเพลินพิศ จันทะลุน","gender":"หญิง","idcard":"3471000344194","houseNo":"11","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-5516389","birth":"11/01/2514","age":52,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":64,"name":"นางสาวอุลัย อุตมูล","gender":"หญิง","idcard":"3471000336523","houseNo":"227","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"080-8438283","birth":"28/08/2505","age":61,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":65,"name":"นางสมพาร มัสรินทร์","gender":"หญิง","idcard":"3470800122390","houseNo":"226","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"065-1020288","birth":"15/03/2524","age":43,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":66,"name":"นางบัวพัฒ เจริญสุข","gender":"หญิง","idcard":"3471000349099","houseNo":"192","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"098-1351886","birth":"09/02/2515","age":52,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":67,"name":"นางหนูแดง พันภักดี","gender":"หญิง","idcard":"3471000340741","houseNo":"201","moo":"7","village":"บ้านโคกสง่า หมู่ 7","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"085-5839897","birth":"19/08/2516","age":50,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":68,"name":"นายบุญเรือง สุขศิริ","gender":"ชาย","idcard":"3320700897595","houseNo":"23","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"086-3259325","birth":"27/04/2510","age":56,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":69,"name":"นางอุบลรัตน์ ศรีขัดเค้า","gender":"หญิง","idcard":"3471000351077","houseNo":"55","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-4804908","birth":"11/03/2521","age":45,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":70,"name":"นางวันเพ็ญ ห่วงเพชร","gender":"หญิง","idcard":"3471000442587","houseNo":"95","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"084-9577031","birth":"02/06/2519","age":47,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":71,"name":"นายถาวร มณีรัตน์","gender":"ชาย","idcard":"3471000450164","houseNo":"112","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-8966149","birth":"02/08/2497","age":69,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":72,"name":"นายอภิชัย ศรีขัดเค้า","gender":"ชาย","idcard":"3471000446426","houseNo":"144","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"065-1096494","birth":"01/10/2503","age":63,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":73,"name":"น.ส.เยาวลักษณ์ โพธิ์ศรี","gender":"หญิง","idcard":"1471000111681","houseNo":"253","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"080-2245460","birth":"07/06/2535","age":31,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":74,"name":"นางสุเทวา เรืองศิลป์","gender":"หญิง","idcard":"3471000449379","houseNo":"240","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"062-3355575","birth":"05/12/2516","age":49,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":75,"name":"นายประนัติ เหล่าชัย","gender":"ชาย","idcard":"3430500557013","houseNo":"27","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"093-7848758","birth":"27/08/2507","age":59,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":76,"name":"นายคำผล ศรีขัดเค้า","gender":"ชาย","idcard":"3471000444245","houseNo":"4","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"080-6030435","birth":"14/10/2507","age":59,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":77,"name":"นางบุญหนา โคตรตัสสา","gender":"หญิง","idcard":"3471000443389","houseNo":"194","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-4460970","birth":"03/09/2524","age":42,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":78,"name":"นางพัชรินทร์ สุขเหลือง","gender":"ชาย","idcard":"3411800319968","houseNo":"202","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"082-1170611","birth":"27/12/2518","age":48,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"},{"no":79,"name":"นางนุชรา ละศรีจันทร์","gender":"หญิง","idcard":"3471000204384","houseNo":"232","moo":"10","village":"บ้านโคกสง่า หมู่ 10","tambon":"ดงหม้อทองใต้","amphoe":"บ้านม่วง","changwat":"สกลนคร","phone":"061-1238694","birth":"01/08/2512","age":54,"type":"ตัวจริง","status":"ปฏิบัติหน้าที่","fkMember":false,"fkStatus":"","fkSpouseMember":false,"fkSpouseName":"","fkSpouseStatus":"","photoUrl":"","createdAt":"2026-01-01"}];
+
+
+/* =====================================================================
+   DASHBOARD
+   ===================================================================== */
+let dashFilter = { year: currentBEYear(), month: "all", day: "all" };
+let dashChart = null;
+
+async function renderDashboard() {
+  const el = document.getElementById("page-dashboard");
+  el.innerHTML = `
+    <div class="filter-bar">
+      <div class="field"><label>วันที่</label><select id="dfDay">${dayOptions(dashFilter.day)}</select></div>
+      <div class="field"><label>เดือน</label><select id="dfMonth">${monthOptions(dashFilter.month)}</select></div>
+      <div class="field"><label>ปี พ.ศ.</label><select id="dfYear">${yearOptions(dashFilter.year)}</select></div>
+      <button class="btn btn-primary" id="dfApply">🔍 กรองข้อมูล</button>
+      <div style="flex:1"></div>
+      <div style="font-size:12px;color:#8592b0;max-width:220px;">แสดงข้อมูลการเข้าร่วมตามช่วงที่กรอง และข้อมูล อสม./ฌกส. สะสมถึงช่วงที่เลือก</div>
+    </div>
+
+    <div class="section-title"><div><h2>ภาพรวมการเข้าร่วมโรงเรียน อสม.</h2><div class="hint">จำนวนผู้เข้าร่วม / ลา / ขาด ในช่วงที่กรอง</div></div></div>
+    <div class="two-col">
+      <div class="stat-grid" id="attendStats" style="align-content:start;"></div>
+      <div class="card card-pad" style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:220px;">
+        <canvas id="attendPie" width="230" height="230"></canvas>
+        <div id="pieLegend" style="display:flex;gap:14px;margin-top:12px;font-size:12px;flex-wrap:wrap;justify-content:center;"></div>
+      </div>
+    </div>
+
+    <div class="section-title"><div><h2>จำนวน อสม. ในเขตพื้นที่</h2><div class="hint">ตัวจริง / จิตอาสา / ลาออก / เสียชีวิต</div></div></div>
+    <div class="stat-grid" id="asmStats"></div>
+
+    <div class="section-title"><div><h2>สมาชิก ฌกส. อสม. แห่งประเทศไทย</h2><div class="hint">อสม.และคู่สมรสที่เป็นสมาชิก / พ้นสภาพ</div></div></div>
+    <div class="stat-grid" id="fkStats"></div>
+  `;
+
+  document.getElementById("dfApply").onclick = () => {
+    dashFilter.day = document.getElementById("dfDay").value;
+    dashFilter.month = document.getElementById("dfMonth").value;
+    dashFilter.year = document.getElementById("dfYear").value;
+    loadDashboardData();
+  };
+
+  await loadDashboardData();
+}
+
+async function loadDashboardData() {
+  const [asmList, attendList] = await Promise.all([DB.list("asm"), DB.list("attendance")]);
+  const [start, end] = computeRange(dashFilter.year, dashFilter.month, dashFilter.day);
+
+  // ---- attendance stats ----
+  const periodAttend = attendList.filter(a => inRange(a.date, start, end));
+  const activeAsmCount = asmList.filter(a => a.status === "ปฏิบัติหน้าที่").length;
+
+  const byDate = {};
+  periodAttend.forEach(a => {
+    byDate[a.date] = byDate[a.date] || { present: 0, leave: 0 };
+    if (a.mode === "leave") byDate[a.date].leave++;
+    else byDate[a.date].present++;
+  });
+  let present = 0, leave = 0, absent = 0;
+  Object.keys(byDate).forEach(d => {
+    present += byDate[d].present;
+    leave += byDate[d].leave;
+    absent += Math.max(activeAsmCount - byDate[d].present - byDate[d].leave, 0);
+  });
+  const total = present + leave + absent || 1;
+
+  document.getElementById("attendStats").innerHTML = `
+    <div class="stat-card" style="--accent:var(--navy)"><div class="stat-label">จำนวนผู้เข้าร่วม</div><div class="stat-num">${present}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:#c78a00"><div class="stat-label">จำนวนผู้ที่ลา</div><div class="stat-num">${leave}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:var(--red)"><div class="stat-label">จำนวนผู้ที่ขาด</div><div class="stat-num">${absent}<span class="stat-unit"> คน</span></div></div>
+  `;
+
+  const pct = n => ((n / total) * 100).toFixed(1);
+  document.getElementById("pieLegend").innerHTML = `
+    <span>🔵 เข้าร่วม ${pct(present)}%</span>
+    <span>🟡 ลา ${pct(leave)}%</span>
+    <span>🔴 ขาด ${pct(absent)}%</span>
+  `;
+  const ctx = document.getElementById("attendPie");
+  if (dashChart) dashChart.destroy();
+  dashChart = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["เข้าร่วม", "ลา", "ขาด"],
+      datasets: [{ data: [present, leave, absent], backgroundColor: ["#22336b", "#c78a00", "#e2231a"], borderWidth: 2, borderColor: "#fff" }]
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) => `${c.label}: ${c.raw} คน (${pct(c.raw)}%)` } }
+      },
+      cutout: "62%"
+    }
+  });
+
+  // ---- asm roster stats (cumulative up to end of period) ----
+  const upTo = asmList.filter(a => !a.createdAt || a.createdAt <= end);
+  const realCount = upTo.filter(a => a.type === "ตัวจริง" && a.status === "ปฏิบัติหน้าที่").length;
+  const volunteerCount = upTo.filter(a => a.type === "จิตอาสา" && a.status === "ปฏิบัติหน้าที่").length;
+  const resignedCount = upTo.filter(a => a.status === "ลาออก").length;
+  const deceasedCount = upTo.filter(a => a.status === "เสียชีวิต").length;
+
+  document.getElementById("asmStats").innerHTML = `
+    <div class="stat-card" style="--accent:var(--navy)"><div class="stat-label">อสม. ตัวจริง</div><div class="stat-num">${realCount}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:#3a6bd6"><div class="stat-label">อสม. จิตอาสา</div><div class="stat-num">${volunteerCount}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:#c78a00"><div class="stat-label">อสม. ที่ลาออก</div><div class="stat-num">${resignedCount}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:var(--red)"><div class="stat-label">อสม. ที่เสียชีวิต</div><div class="stat-num">${deceasedCount}<span class="stat-unit"> คน</span></div></div>
+  `;
+
+  // ---- ฌกส. stats ----
+  const fkMember = upTo.filter(a => a.fkMember && a.fkStatus === "สมาชิก").length;
+  const fkSpouseMember = upTo.filter(a => a.fkSpouseMember && a.fkSpouseStatus === "สมาชิก").length;
+  const fkExpired = upTo.filter(a => a.fkMember && a.fkStatus === "พ้นสภาพ").length;
+  const fkSpouseExpired = upTo.filter(a => a.fkSpouseMember && a.fkSpouseStatus === "พ้นสภาพ").length;
+
+  document.getElementById("fkStats").innerHTML = `
+    <div class="stat-card" style="--accent:var(--navy)"><div class="stat-label">อสม. ที่เป็นสมาชิก</div><div class="stat-num">${fkMember}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:#3a6bd6"><div class="stat-label">คู่สมรส อสม.ที่เป็นสมาชิก</div><div class="stat-num">${fkSpouseMember}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:#c78a00"><div class="stat-label">อสม. ที่พ้นสภาพสมาชิก</div><div class="stat-num">${fkExpired}<span class="stat-unit"> คน</span></div></div>
+    <div class="stat-card" style="--accent:var(--red)"><div class="stat-label">คู่สมรสที่พ้นสภาพสมาชิก</div><div class="stat-num">${fkSpouseExpired}<span class="stat-unit"> คน</span></div></div>
+  `;
+}
+
+
+/* =====================================================================
+   ข้อมูล อสม. ในเขตพื้นที่
+   ===================================================================== */
+let asmCache = [];
+let asmSearch = "";
+let asmMooFilter = "all";
+
+async function renderAsmPage() {
+  const el = document.getElementById("page-asm");
+  el.innerHTML = `
+    <div class="section-title">
+      <div><h2>บันทึกข้อมูล อสม.</h2><div class="hint">รายชื่อ อาสาสมัครสาธารณสุขประจำหมู่บ้านในเขตพื้นที่รับผิดชอบ</div></div>
+      <button class="btn btn-red" id="addAsmBtn">➕ เพิ่ม อสม.</button>
+    </div>
+    <div class="search-row">
+      <input type="text" id="asmSearchInput" placeholder="🔎 ค้นหาชื่อ หรือ เลขบัตรประชาชน">
+      <select id="asmMooSelect" style="max-width:160px;"><option value="all">ทุกหมู่บ้าน</option></select>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table id="asmTable">
+          <thead><tr><th style="width:50px;">ลำดับ</th><th>ชื่อ-สกุล</th><th>เลขบัตรประจำตัวประชาชน</th><th style="width:90px;">หมู่</th><th style="width:110px;">สถานะ</th><th style="width:100px;"></th></tr></thead>
+          <tbody id="asmTbody"><tr><td colspan="6" class="empty">กำลังโหลดข้อมูล...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById("addAsmBtn").onclick = () => openAsmForm(null);
+  document.getElementById("asmSearchInput").oninput = (e) => { asmSearch = e.target.value.trim(); drawAsmTable(); };
+  document.getElementById("asmMooSelect").onchange = (e) => { asmMooFilter = e.target.value; drawAsmTable(); };
+
+  await loadAsmData();
+}
+
+async function loadAsmData() {
+  asmCache = await DB.list("asm");
+  asmCache.sort((a, b) => (Number(a.no) || 0) - (Number(b.no) || 0));
+  const moos = [...new Set(asmCache.map(a => a.moo).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  const sel = document.getElementById("asmMooSelect");
+  if (sel) sel.innerHTML = `<option value="all">ทุกหมู่บ้าน</option>` + moos.map(m => `<option value="${esc(m)}">หมู่ ${esc(m)}</option>`).join("");
+  drawAsmTable();
+}
+
+function drawAsmTable() {
+  const tbody = document.getElementById("asmTbody");
+  if (!tbody) return;
+  let rows = asmCache;
+  if (asmMooFilter !== "all") rows = rows.filter(a => String(a.moo) === String(asmMooFilter));
+  if (asmSearch) {
+    const q = asmSearch.toLowerCase();
+    rows = rows.filter(a => (a.name || "").toLowerCase().includes(q) || (a.idcard || "").includes(q));
+  }
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><span class="ic">🗂️</span>ไม่พบข้อมูล อสม.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map((a, i) => `
+    <tr>
+      <td>${a.no || (i + 1)}</td>
+      <td>${esc(a.name)}</td>
+      <td>${esc(a.idcard)}</td>
+      <td>หมู่ ${esc(a.moo)}</td>
+      <td>${statusPill(a.status)}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="viewAsmDetail('${a.id}')">ดูข้อมูล</button></td>
+    </tr>
+  `).join("");
+}
+
+function statusPill(status) {
+  if (status === "ปฏิบัติหน้าที่") return `<span class="pill pill-ok">ปฏิบัติหน้าที่</span>`;
+  if (status === "ลาออก") return `<span class="pill pill-warn">ลาออก</span>`;
+  if (status === "เสียชีวิต") return `<span class="pill pill-red">เสียชีวิต</span>`;
+  return `<span class="pill pill-blue">${esc(status || "-")}</span>`;
+}
+
+function viewAsmDetail(id) {
+  const a = asmCache.find(x => x.id === id);
+  if (!a) return;
+  openModal(`
+    <div class="modal-head"><h3>ข้อมูล อสม.</h3><button class="x-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:16px;align-items:center;margin-bottom:16px;">
+        <div style="width:64px;height:64px;border-radius:50%;background:var(--blue-soft);display:flex;align-items:center;justify-content:center;font-size:26px;overflow:hidden;flex-shrink:0;">
+          ${a.photoUrl ? `<img src="${esc(a.photoUrl)}" style="width:100%;height:100%;object-fit:cover;">` : "👤"}
+        </div>
+        <div><div style="font-size:17px;font-weight:600;">${esc(a.name)}</div><div style="color:#7280a3;font-size:13px;">${statusPill(a.status)} &nbsp; ${esc(a.type)}</div></div>
+      </div>
+      <div class="detail-list">
+        <div class="detail-item"><div class="k">1. ชื่อ อสม.</div><div class="v">${esc(a.name)}</div></div>
+        <div class="detail-item"><div class="k">2. เลขบัตรประจำตัวประชาชน</div><div class="v">${esc(a.idcard)}</div></div>
+        <div class="detail-item"><div class="k">3. บ้านเลขที่</div><div class="v">${esc(a.houseNo)}</div></div>
+        <div class="detail-item"><div class="k">4. หมู่บ้าน</div><div class="v">หมู่ ${esc(a.moo)} — ${esc(a.village)}</div></div>
+        <div class="detail-item"><div class="k">5. ตำบล</div><div class="v">${esc(a.tambon)}</div></div>
+        <div class="detail-item"><div class="k">6. อำเภอ</div><div class="v">${esc(a.amphoe)}</div></div>
+        <div class="detail-item"><div class="k">7. จังหวัด</div><div class="v">${esc(a.changwat)}</div></div>
+        <div class="detail-item"><div class="k">เพศ</div><div class="v">${esc(a.gender || "-")}</div></div>
+        <div class="detail-item"><div class="k">วันเกิด</div><div class="v">${esc(a.birth || "-")} ${a.age ? "(อายุ " + esc(a.age) + " ปี)" : ""}</div></div>
+        <div class="detail-item"><div class="k">เบอร์โทรติดต่อ</div><div class="v">${esc(a.phone || "-")}</div></div>
+        <div class="detail-item"><div class="k">สมาชิก ฌกส.</div><div class="v">${a.fkMember ? "เป็นสมาชิก (" + esc(a.fkStatus || "-") + ")" : "ไม่ได้เป็นสมาชิก"}</div></div>
+        <div class="detail-item"><div class="k">คู่สมรสสมาชิก ฌกส.</div><div class="v">${a.fkSpouseMember ? esc(a.fkSpouseName || "-") + " (" + esc(a.fkSpouseStatus || "-") + ")" : "ไม่มี"}</div></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="deleteAsm('${a.id}')">🗑️ ลบข้อมูล</button>
+      <button class="btn btn-outline" onclick="openAsmForm('${a.id}')">✏️ แก้ไขข้อมูล</button>
+      <button class="btn btn-primary" onclick="closeModal()">ปิด</button>
+    </div>
+  `);
+}
+
+function openAsmForm(id) {
+  const a = id ? asmCache.find(x => x.id === id) : {};
+  const v = (k, d = "") => esc(a && a[k] !== undefined && a[k] !== null ? a[k] : d);
+  openModal(`
+    <div class="modal-head"><h3>${id ? "แก้ไขข้อมูล อสม." : "เพิ่มข้อมูล อสม."}</h3><button class="x-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="asmForm">
+        <fieldset>
+          <legend>ข้อมูลทั่วไป</legend>
+          <div class="grid2">
+            <div class="field full"><label>ชื่อ-สกุล *</label><input required type="text" name="name" value="${v('name')}"></div>
+            <div class="field"><label>เพศ</label><select name="gender"><option ${v('gender') === 'ชาย' ? 'selected' : ''}>ชาย</option><option ${v('gender') === 'หญิง' ? 'selected' : ''}>หญิง</option></select></div>
+            <div class="field"><label>เลขบัตรประจำตัวประชาชน *</label><input required type="text" name="idcard" value="${v('idcard')}"></div>
+            <div class="field"><label>วัน/เดือน/ปีเกิด</label><input type="text" name="birth" placeholder="เช่น 4/12/2526" value="${v('birth')}"></div>
+            <div class="field"><label>อายุ</label><input type="number" name="age" value="${v('age')}"></div>
+            <div class="field"><label>เบอร์โทรติดต่อ</label><input type="tel" name="phone" value="${v('phone')}"></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>ที่อยู่</legend>
+          <div class="grid2">
+            <div class="field"><label>บ้านเลขที่</label><input type="text" name="houseNo" value="${v('houseNo')}"></div>
+            <div class="field"><label>หมู่</label><input type="text" name="moo" value="${v('moo')}"></div>
+            <div class="field full"><label>หมู่บ้าน</label><input type="text" name="village" value="${v('village')}"></div>
+            <div class="field"><label>ตำบล</label><input type="text" name="tambon" value="${v('tambon', 'ดงหม้อทองใต้')}"></div>
+            <div class="field"><label>อำเภอ</label><input type="text" name="amphoe" value="${v('amphoe', 'บ้านม่วง')}"></div>
+            <div class="field"><label>จังหวัด</label><input type="text" name="changwat" value="${v('changwat', 'สกลนคร')}"></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>สถานภาพ อสม.</legend>
+          <div class="grid2">
+            <div class="field"><label>ประเภท</label><select name="type"><option ${v('type') === 'ตัวจริง' ? 'selected' : ''}>ตัวจริง</option><option ${v('type') === 'จิตอาสา' ? 'selected' : ''}>จิตอาสา</option></select></div>
+            <div class="field"><label>สถานะ</label><select name="status">
+              <option ${v('status', 'ปฏิบัติหน้าที่') === 'ปฏิบัติหน้าที่' ? 'selected' : ''}>ปฏิบัติหน้าที่</option>
+              <option ${v('status') === 'ลาออก' ? 'selected' : ''}>ลาออก</option>
+              <option ${v('status') === 'เสียชีวิต' ? 'selected' : ''}>เสียชีวิต</option>
+            </select></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>สมาชิก ฌกส. อสม. แห่งประเทศไทย</legend>
+          <div class="radio-row"><label><input type="checkbox" name="fkMember" ${a && a.fkMember ? "checked" : ""}> อสม. เป็นสมาชิก ฌกส.</label></div>
+          <div class="grid2">
+            <div class="field"><label>สถานะสมาชิก (อสม.)</label><select name="fkStatus"><option value="สมาชิก" ${v('fkStatus') === 'สมาชิก' ? 'selected' : ''}>สมาชิก</option><option value="พ้นสภาพ" ${v('fkStatus') === 'พ้นสภาพ' ? 'selected' : ''}>พ้นสภาพ</option></select></div>
+          </div>
+          <div class="radio-row" style="margin-top:8px;"><label><input type="checkbox" name="fkSpouseMember" ${a && a.fkSpouseMember ? "checked" : ""}> คู่สมรสเป็นสมาชิก ฌกส.</label></div>
+          <div class="grid2">
+            <div class="field"><label>ชื่อ-สกุล คู่สมรส</label><input type="text" name="fkSpouseName" value="${v('fkSpouseName')}"></div>
+            <div class="field"><label>สถานะสมาชิก (คู่สมรส)</label><select name="fkSpouseStatus"><option value="สมาชิก" ${v('fkSpouseStatus') === 'สมาชิก' ? 'selected' : ''}>สมาชิก</option><option value="พ้นสภาพ" ${v('fkSpouseStatus') === 'พ้นสภาพ' ? 'selected' : ''}>พ้นสภาพ</option></select></div>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>รูปถ่าย (ไม่บังคับ — อัปโหลดผ่าน imgbb)</legend>
+          <input type="file" accept="image/*" id="asmPhotoInput">
+          <input type="hidden" name="photoUrl" value="${v('photoUrl')}">
+          <div id="photoPreviewWrap" style="margin-top:8px;">${a && a.photoUrl ? `<img src="${esc(a.photoUrl)}" style="width:70px;height:70px;object-fit:cover;border-radius:10px;">` : ""}</div>
+        </fieldset>
+      </form>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn btn-primary" id="asmSaveBtn">💾 บันทึกข้อมูล</button>
+    </div>
+  `);
+
+  document.getElementById("asmPhotoInput").onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!IMGBB_API_KEY) { toast("ยังไม่ได้ตั้งค่า IMGBB_API_KEY ในไฟล์ index.html", "err"); return; }
+    toast("กำลังอัปโหลดรูปภาพ...");
+    try {
+      const url = await uploadToImgbb(file);
+      document.querySelector('#asmForm input[name="photoUrl"]').value = url;
+      document.getElementById("photoPreviewWrap").innerHTML = `<img src="${url}" style="width:70px;height:70px;object-fit:cover;border-radius:10px;">`;
+      toast("อัปโหลดรูปภาพสำเร็จ", "ok");
+    } catch (err) {
+      console.error(err);
+      toast("อัปโหลดรูปภาพไม่สำเร็จ", "err");
+    }
+  };
+
+  document.getElementById("asmSaveBtn").onclick = async () => {
+    const form = document.getElementById("asmForm");
+    if (!form.reportValidity()) return;
+    const fd = new FormData(form);
+    const obj = {
+      name: fd.get("name") || "",
+      gender: fd.get("gender") || "",
+      idcard: fd.get("idcard") || "",
+      birth: fd.get("birth") || "",
+      age: fd.get("age") || "",
+      phone: fd.get("phone") || "",
+      houseNo: fd.get("houseNo") || "",
+      moo: fd.get("moo") || "",
+      village: fd.get("village") || "",
+      tambon: fd.get("tambon") || "",
+      amphoe: fd.get("amphoe") || "",
+      changwat: fd.get("changwat") || "",
+      type: fd.get("type") || "ตัวจริง",
+      status: fd.get("status") || "ปฏิบัติหน้าที่",
+      fkMember: form.querySelector('[name="fkMember"]').checked,
+      fkStatus: fd.get("fkStatus") || "",
+      fkSpouseMember: form.querySelector('[name="fkSpouseMember"]').checked,
+      fkSpouseName: fd.get("fkSpouseName") || "",
+      fkSpouseStatus: fd.get("fkSpouseStatus") || "",
+      photoUrl: fd.get("photoUrl") || "",
+      createdAt: (a && a.createdAt) || nowIsoDate(),
+      no: (a && a.no) || (asmCache.length + 1)
+    };
+    try {
+      if (id) await DB.set("asm", id, obj);
+      else await DB.add("asm", obj);
+      toast("บันทึกข้อมูล อสม. สำเร็จ", "ok");
+      closeModal();
+      await loadAsmData();
+    } catch (err) {
+      console.error(err);
+      toast("เกิดข้อผิดพลาดในการบันทึก", "err");
+    }
+  };
+}
+
+async function deleteAsm(id) {
+  if (!confirm("ยืนยันการลบข้อมูล อสม. รายนี้?")) return;
+  await DB.remove("asm", id);
+  toast("ลบข้อมูลแล้ว", "ok");
+  closeModal();
+  await loadAsmData();
+}
+
+async function uploadToImgbb(file) {
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  const fd = new FormData();
+  fd.append("image", b64);
+  const resp = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, { method: "POST", body: fd });
+  const data = await resp.json();
+  if (!data.success) throw new Error("imgbb upload failed");
+  return data.data.url;
+}
+
+
+/* =====================================================================
+   ลงชื่อเข้าร่วม รร.
+   ===================================================================== */
+let attendListCache = [];
+let attendDateFilter = nowIsoDate();
+
+async function renderAttendPage() {
+  const el = document.getElementById("page-attend");
+  const asmList = asmCache.length ? asmCache : await DB.list("asm");
+  const activeAsm = asmList.filter(a => a.status === "ปฏิบัติหน้าที่").sort((a, b) => (a.no || 0) - (b.no || 0));
+
+  el.innerHTML = `
+    <div class="two-col">
+      <div class="card card-pad">
+        <h3 style="margin-top:0;color:var(--navy-deep);font-size:15px;">ลงชื่อเข้าร่วมโรงเรียน อสม.</h3>
+        <form id="attendForm">
+          <div class="field" style="margin-bottom:12px;"><label>วันที่ประชุม</label><input type="date" name="date" value="${attendDateFilter}" required></div>
+          <div class="field" style="margin-bottom:12px;">
+            <label>1. ชื่อ อสม.</label>
+            <select name="asmId" id="attendAsmSelect" required>
+              <option value="">— เลือกชื่อ อสม. —</option>
+              ${activeAsm.map(a => `<option value="${a.id}" data-moo="${esc(a.moo)}">${esc(a.name)} (หมู่ ${esc(a.moo)})</option>`).join("")}
+            </select>
+          </div>
+          <div class="field" style="margin-bottom:12px;"><label>2. หมู่บ้าน</label><input type="text" name="moo" id="attendMoo" readonly placeholder="เลือกชื่อ อสม. ก่อน"></div>
+          <div class="field" style="margin-bottom:8px;">
+            <label>3. การเข้าร่วม</label>
+            <select name="mode" id="attendMode">
+              <option value="self">มาประชุมเอง</option>
+              <option value="replace">มาประชุมแทน</option>
+              <option value="leave">แจ้งลา</option>
+            </select>
+          </div>
+          <div class="field" id="replaceWrap" style="display:none;margin-bottom:12px;">
+            <label>ชื่อผู้เข้าประชุมแทน</label>
+            <input type="text" name="replaceName" placeholder="ระบุชื่อ-สกุลผู้มาแทน">
+          </div>
+          <button class="btn btn-red" type="submit" style="width:100%;justify-content:center;margin-top:6px;">✅ บันทึกการลงชื่อ</button>
+        </form>
+      </div>
+
+      <div class="card card-pad">
+        <h3 style="margin-top:0;color:var(--navy-deep);font-size:15px;">รายชื่อผู้ลงชื่อวันที่เลือก</h3>
+        <div class="field" style="margin-bottom:12px;"><input type="date" id="attendFilterDate" value="${attendDateFilter}"></div>
+        <div id="attendSummary" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;"></div>
+        <div class="table-wrap" style="max-height:340px;overflow-y:auto;">
+          <table>
+            <thead><tr><th>ชื่อ อสม.</th><th>หมู่</th><th>สถานะ</th><th></th></tr></thead>
+            <tbody id="attendTbody"><tr><td colspan="4" class="empty">กำลังโหลด...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("attendAsmSelect").onchange = (e) => {
+    const opt = e.target.selectedOptions[0];
+    document.getElementById("attendMoo").value = opt ? (opt.dataset.moo || "") : "";
+  };
+  document.getElementById("attendMode").onchange = (e) => {
+    document.getElementById("replaceWrap").style.display = e.target.value === "replace" ? "block" : "none";
+  };
+  document.getElementById("attendFilterDate").onchange = (e) => {
+    attendDateFilter = e.target.value;
+    drawAttendTable();
+  };
+  document.getElementById("attendForm").onsubmit = async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const asmId = fd.get("asmId");
+    const asmObj = activeAsm.find(a => a.id === asmId);
+    if (!asmObj) { toast("กรุณาเลือกชื่อ อสม.", "err"); return; }
+    const obj = {
+      date: fd.get("date"),
+      asmId,
+      asmName: asmObj.name,
+      moo: fd.get("moo") || asmObj.moo,
+      mode: fd.get("mode"),
+      replaceName: fd.get("replaceName") || "",
+      createdAt: new Date().toISOString()
+    };
+    try {
+      await DB.add("attendance", obj);
+      toast("บันทึกการลงชื่อเรียบร้อย", "ok");
+      e.target.reset();
+      document.querySelector('#attendForm [name="date"]').value = obj.date;
+      document.getElementById("attendMoo").value = "";
+      attendDateFilter = obj.date;
+      document.getElementById("attendFilterDate").value = obj.date;
+      drawAttendTable();
+    } catch (err) {
+      console.error(err);
+      toast("บันทึกไม่สำเร็จ", "err");
+    }
+  };
+
+  await loadAttendData();
+}
+
+async function loadAttendData() {
+  attendListCache = await DB.list("attendance");
+  drawAttendTable();
+}
+
+function drawAttendTable() {
+  const tbody = document.getElementById("attendTbody");
+  if (!tbody) return;
+  const rows = attendListCache.filter(a => a.date === attendDateFilter).sort((a, b) => (a.moo || "").localeCompare(b.moo || ""));
+  const present = rows.filter(r => r.mode !== "leave").length;
+  const leave = rows.filter(r => r.mode === "leave").length;
+
+  const sumEl = document.getElementById("attendSummary");
+  if (sumEl) sumEl.innerHTML = `<span class="pill pill-ok">เข้าร่วม ${present}</span><span class="pill pill-warn">ลา ${leave}</span>`;
+
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty"><span class="ic">✍️</span>ยังไม่มีผู้ลงชื่อในวันนี้</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.asmName)}${r.mode === "replace" ? `<div style="font-size:11.5px;color:#8592b0;">แทนโดย: ${esc(r.replaceName || "-")}</div>` : ""}</td>
+      <td>หมู่ ${esc(r.moo)}</td>
+      <td>${modePill(r.mode)}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="deleteAttend('${r.id}')">🗑️</button></td>
+    </tr>
+  `).join("");
+}
+
+function modePill(mode) {
+  if (mode === "self") return `<span class="pill pill-ok">มาประชุมเอง</span>`;
+  if (mode === "replace") return `<span class="pill pill-blue">มาประชุมแทน</span>`;
+  if (mode === "leave") return `<span class="pill pill-warn">แจ้งลา</span>`;
+  return "-";
+}
+
+async function deleteAttend(id) {
+  if (!confirm("ยืนยันการลบรายการนี้?")) return;
+  await DB.remove("attendance", id);
+  await loadAttendData();
+  toast("ลบรายการแล้ว", "ok");
+}
+
+
+/* =====================================================================
+   บันทึกรายงานการประชุม
+   ===================================================================== */
+let meetingCache = [];
+
+async function renderMeetingPage() {
+  const el = document.getElementById("page-meeting");
+  el.innerHTML = `
+    <div class="section-title">
+      <div><h2>บันทึกรายงานการประชุม</h2><div class="hint">บันทึกวาระการประชุมโรงเรียน อสม.</div></div>
+      <button class="btn btn-red" id="addMeetingBtn">➕ บันทึกการประชุมใหม่</button>
+    </div>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="width:60px;">ครั้งที่</th><th>หัวเรื่อง</th><th style="width:130px;">วันที่ประชุม</th><th style="width:160px;"></th></tr></thead>
+          <tbody id="meetingTbody"><tr><td colspan="4" class="empty">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  document.getElementById("addMeetingBtn").onclick = () => openMeetingForm(null);
+  await loadMeetingData();
+}
+
+async function loadMeetingData() {
+  meetingCache = await DB.list("meetings");
+  meetingCache.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  drawMeetingTable();
+}
+
+function drawMeetingTable() {
+  const tbody = document.getElementById("meetingTbody");
+  if (!tbody) return;
+  if (meetingCache.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="empty"><span class="ic">📝</span>ยังไม่มีบันทึกรายงานการประชุม</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = meetingCache.map(m => `
+    <tr>
+      <td>${esc(m.meetingNo || "-")}</td>
+      <td>${esc(m.title)}</td>
+      <td>${isoToThaiDate(m.date)}</td>
+      <td style="display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" onclick="openMeetingForm('${m.id}')">✏️ แก้ไข</button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteMeeting('${m.id}')">🗑️</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function openMeetingForm(id) {
+  const m = id ? meetingCache.find(x => x.id === id) : {};
+  const v = (k, d = "") => esc(m && m[k] !== undefined && m[k] !== null ? m[k] : d);
+  openModal(`
+    <div class="modal-head"><h3>${id ? "แก้ไขรายงานการประชุม" : "บันทึกรายงานการประชุม"}</h3><button class="x-close" onclick="closeModal()">✕</button></div>
+    <div class="modal-body">
+      <form id="meetingForm">
+        <div class="grid2" style="margin-bottom:12px;">
+          <div class="field full"><label>หัวเรื่อง</label><input type="text" name="title" required placeholder="เช่น รายงานการประชุมโรงเรียน อสม. บ้านโคกสง่า" value="${v('title')}"></div>
+          <div class="field"><label>ครั้งที่ / ปี</label><input type="text" name="meetingNo" placeholder="เช่น 8/2569" value="${v('meetingNo')}"></div>
+          <div class="field"><label>วันที่ประชุม</label><input type="date" name="date" required value="${v('date', nowIsoDate())}"></div>
+        </div>
+        <fieldset><legend>วาระที่ 1 ประธานแจ้งเพื่อทราบ</legend>
+          <textarea name="agenda1" placeholder="รายละเอียด...">${v('agenda1')}</textarea>
+        </fieldset>
+        <fieldset><legend>วาระที่ 2 เรื่องทั่วไป</legend>
+          <textarea name="agenda2" placeholder="รายละเอียด...">${v('agenda2')}</textarea>
+        </fieldset>
+        <fieldset><legend>วาระที่ 3 เรื่องเสนอพิจารณา</legend>
+          <textarea name="agenda3" placeholder="รายละเอียด...">${v('agenda3')}</textarea>
+        </fieldset>
+        <fieldset><legend>วาระที่ 4 เรื่องอื่น ๆ</legend>
+          <textarea name="agenda4" placeholder="รายละเอียด...">${v('agenda4')}</textarea>
+        </fieldset>
+        <div class="grid2">
+          <div class="field"><label>ผู้บันทึกรายงานการประชุม</label><input type="text" name="recorder" value="${v('recorder')}"></div>
+          <div class="field"><label>ผู้ตรวจรายงานการประชุม</label><input type="text" name="chairman" value="${v('chairman')}"></div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal()">ยกเลิก</button>
+      <button class="btn btn-primary" id="meetingSaveBtn">💾 บันทึก</button>
+    </div>
+  `);
+
+  document.getElementById("meetingSaveBtn").onclick = async () => {
+    const form = document.getElementById("meetingForm");
+    if (!form.reportValidity()) return;
+    const fd = new FormData(form);
+    const obj = {
+      title: fd.get("title") || "",
+      meetingNo: fd.get("meetingNo") || "",
+      date: fd.get("date") || "",
+      agenda1: fd.get("agenda1") || "",
+      agenda2: fd.get("agenda2") || "",
+      agenda3: fd.get("agenda3") || "",
+      agenda4: fd.get("agenda4") || "",
+      recorder: fd.get("recorder") || "",
+      chairman: fd.get("chairman") || "",
+      createdAt: (m && m.createdAt) || new Date().toISOString()
+    };
+    try {
+      if (id) await DB.set("meetings", id, obj);
+      else await DB.add("meetings", obj);
+      toast("บันทึกรายงานการประชุมสำเร็จ", "ok");
+      closeModal();
+      await loadMeetingData();
+    } catch (err) {
+      console.error(err);
+      toast("บันทึกไม่สำเร็จ", "err");
+    }
+  };
+}
+
+async function deleteMeeting(id) {
+  if (!confirm("ยืนยันการลบรายงานการประชุมนี้?")) return;
+  await DB.remove("meetings", id);
+  toast("ลบรายงานแล้ว", "ok");
+  await loadMeetingData();
+}
+
+
+/* =====================================================================
+   ออกรายงาน (PDF)
+   ===================================================================== */
+const LOGO_SRC = document.querySelector(".sidebar .brand-wrap img").src;
+
+async function renderReportPage() {
+  const el = document.getElementById("page-report");
+  const beY = currentBEYear();
+  el.innerHTML = `
+    <div class="section-title"><div><h2>ออกรายงาน</h2><div class="hint">เลือกประเภทรายงานที่ต้องการออกเป็นไฟล์ PDF</div></div></div>
+    <div class="two-col" style="grid-template-columns:1fr 1fr;">
+
+      <div class="card card-pad">
+        <h3 style="margin-top:0;font-size:15px;color:var(--navy-deep);">1. รายงานภาพรวม Dashboard</h3>
+        <p style="font-size:13px;color:#7280a3;">สรุปจำนวนผู้เข้าร่วม/ลา/ขาด และข้อมูล อสม./ฌกส. ตามช่วงที่กรอง</p>
+        <div class="grid2">
+          <div class="field"><label>เดือน</label><select id="rpMonth1">${monthOptions("all")}</select></div>
+          <div class="field"><label>ปี พ.ศ.</label><select id="rpYear1">${yearOptions(beY)}</select></div>
+        </div>
+        <button class="btn btn-primary" style="margin-top:12px;width:100%;justify-content:center;" onclick="exportDashboardPdf()">📄 ออกรายงาน PDF</button>
+      </div>
+
+      <div class="card card-pad">
+        <h3 style="margin-top:0;font-size:15px;color:var(--navy-deep);">2. รายงานข้อมูล อสม. ในเขตพื้นที่</h3>
+        <p style="font-size:13px;color:#7280a3;">รายชื่อ อสม. ทั้งหมดพร้อมรายละเอียดที่อยู่และการติดต่อ</p>
+        <div class="field"><label>กรองตามหมู่บ้าน</label><select id="rpMoo2"><option value="all">ทุกหมู่บ้าน</option></select></div>
+        <button class="btn btn-primary" style="margin-top:12px;width:100%;justify-content:center;" onclick="exportAsmPdf()">📄 ออกรายงาน PDF</button>
+      </div>
+
+      <div class="card card-pad">
+        <h3 style="margin-top:0;font-size:15px;color:var(--navy-deep);">3. รายงานการลงชื่อเข้าร่วม รร.</h3>
+        <p style="font-size:13px;color:#7280a3;">รายชื่อผู้ลงชื่อเข้าร่วม/ลา ตามวันที่ประชุมที่เลือก</p>
+        <div class="field"><label>วันที่ประชุม</label><input type="date" id="rpDate3" value="${nowIsoDate()}"></div>
+        <button class="btn btn-primary" style="margin-top:12px;width:100%;justify-content:center;" onclick="exportAttendPdf()">📄 ออกรายงาน PDF</button>
+      </div>
+
+      <div class="card card-pad">
+        <h3 style="margin-top:0;font-size:15px;color:var(--navy-deep);">4. รายงานการประชุม</h3>
+        <p style="font-size:13px;color:#7280a3;">บันทึกรายงานการประชุมฉบับที่เลือก จัดหน้าแบบทางการ</p>
+        <div class="field"><label>เลือกการประชุม</label><select id="rpMeeting4"><option value="">— เลือกรายงานการประชุม —</option></select></div>
+        <button class="btn btn-primary" style="margin-top:12px;width:100%;justify-content:center;" onclick="exportMeetingPdf()">📄 ออกรายงาน PDF</button>
+      </div>
+
+    </div>
+  `;
+
+  const asmList = await DB.list("asm");
+  const moos = [...new Set(asmList.map(a => a.moo).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+  document.getElementById("rpMoo2").innerHTML = `<option value="all">ทุกหมู่บ้าน</option>` + moos.map(m => `<option value="${esc(m)}">หมู่ ${esc(m)}</option>`).join("");
+
+  const meetings = await DB.list("meetings");
+  meetings.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  document.getElementById("rpMeeting4").innerHTML = `<option value="">— เลือกรายงานการประชุม —</option>` +
+    meetings.map(m => `<option value="${m.id}">${esc(m.title)} (${isoToThaiDate(m.date)})</option>`).join("");
+}
+
+function reportHeader(title) {
+  const now = new Date();
+  return `
+    <div class="rp-head">
+      <img src="${LOGO_SRC}">
+      <div>
+        <h1>${esc(title)}</h1>
+        <p>โรงเรียน อาสาสมัครสาธารณสุขประจำหมู่บ้าน (อสม.) — โรงพยาบาลส่งเสริมสุขภาพตำบลบ้านโคกสง่า</p>
+        <p>ตำบลดงหม้อทองใต้ อำเภอบ้านม่วง จังหวัดสกลนคร</p>
+      </div>
+    </div>
+    <div class="rp-meta">พิมพ์รายงานเมื่อวันที่ ${isoToThaiDate(nowIsoDate())}</div>
+  `;
+}
+
+async function renderToPdf(innerHtml, filename) {
+  const canvas = document.getElementById("report-canvas");
+  canvas.innerHTML = `<div style="padding:36px;">${innerHtml}</div>`;
+  toast("กำลังสร้างไฟล์ PDF...");
+  await html2pdf().set({
+    margin: 0,
+    filename,
+    image: { type: "jpeg", quality: 0.97 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: "pt", format: "a4", orientation: "portrait" }
+  }).from(canvas).save();
+  canvas.innerHTML = "";
+}
+
+async function exportDashboardPdf() {
+  const month = document.getElementById("rpMonth1").value;
+  const year = document.getElementById("rpYear1").value;
+  const [asmList, attendList] = await Promise.all([DB.list("asm"), DB.list("attendance")]);
+  const [start, end] = computeRange(year, month, "all");
+  const periodAttend = attendList.filter(a => inRange(a.date, start, end));
+  const activeAsmCount = asmList.filter(a => a.status === "ปฏิบัติหน้าที่").length;
+  const byDate = {};
+  periodAttend.forEach(a => {
+    byDate[a.date] = byDate[a.date] || { present: 0, leave: 0 };
+    if (a.mode === "leave") byDate[a.date].leave++; else byDate[a.date].present++;
+  });
+  let present = 0, leave = 0, absent = 0;
+  Object.keys(byDate).forEach(d => {
+    present += byDate[d].present; leave += byDate[d].leave;
+    absent += Math.max(activeAsmCount - byDate[d].present - byDate[d].leave, 0);
+  });
+  const upTo = asmList.filter(a => !a.createdAt || a.createdAt <= end);
+  const realCount = upTo.filter(a => a.type === "ตัวจริง" && a.status === "ปฏิบัติหน้าที่").length;
+  const volunteerCount = upTo.filter(a => a.type === "จิตอาสา" && a.status === "ปฏิบัติหน้าที่").length;
+  const resignedCount = upTo.filter(a => a.status === "ลาออก").length;
+  const deceasedCount = upTo.filter(a => a.status === "เสียชีวิต").length;
+  const fkMember = upTo.filter(a => a.fkMember && a.fkStatus === "สมาชิก").length;
+  const fkSpouseMember = upTo.filter(a => a.fkSpouseMember && a.fkSpouseStatus === "สมาชิก").length;
+  const fkExpired = upTo.filter(a => a.fkMember && a.fkStatus === "พ้นสภาพ").length;
+  const fkSpouseExpired = upTo.filter(a => a.fkSpouseMember && a.fkSpouseStatus === "พ้นสภาพ").length;
+
+  const monthLabel = month === "all" ? "ทั้งปี" : THAI_MONTHS[Number(month)];
+
+  const html = `
+    ${reportHeader("รายงานภาพรวมโรงเรียน อสม.")}
+    <div class="rp-meta">ช่วงข้อมูล: ${monthLabel} พ.ศ. ${year}</div>
+    <div class="rp-section-title">การเข้าร่วมโรงเรียน อสม.</div>
+    <div class="rp-stat-row">
+      <div class="rp-stat"><div class="k">จำนวนผู้เข้าร่วม</div><div class="v">${present}</div></div>
+      <div class="rp-stat"><div class="k">จำนวนผู้ที่ลา</div><div class="v">${leave}</div></div>
+      <div class="rp-stat"><div class="k">จำนวนผู้ที่ขาด</div><div class="v">${absent}</div></div>
+    </div>
+    <div class="rp-section-title">จำนวน อสม. ในเขตพื้นที่</div>
+    <div class="rp-stat-row">
+      <div class="rp-stat"><div class="k">อสม. ตัวจริง</div><div class="v">${realCount}</div></div>
+      <div class="rp-stat"><div class="k">อสม. จิตอาสา</div><div class="v">${volunteerCount}</div></div>
+      <div class="rp-stat"><div class="k">ลาออก</div><div class="v">${resignedCount}</div></div>
+      <div class="rp-stat"><div class="k">เสียชีวิต</div><div class="v">${deceasedCount}</div></div>
+    </div>
+    <div class="rp-section-title">สมาชิก ฌกส. อสม. แห่งประเทศไทย</div>
+    <div class="rp-stat-row">
+      <div class="rp-stat"><div class="k">อสม. สมาชิก</div><div class="v">${fkMember}</div></div>
+      <div class="rp-stat"><div class="k">คู่สมรสสมาชิก</div><div class="v">${fkSpouseMember}</div></div>
+      <div class="rp-stat"><div class="k">อสม. พ้นสภาพ</div><div class="v">${fkExpired}</div></div>
+      <div class="rp-stat"><div class="k">คู่สมรสพ้นสภาพ</div><div class="v">${fkSpouseExpired}</div></div>
+    </div>
+    <div class="rp-foot"><span>รายงานจากระบบฐานข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า</span><span>หน้า 1/1</span></div>
+  `;
+  await renderToPdf(html, `รายงานภาพรวม-${monthLabel}-${year}.pdf`);
+}
+
+async function exportAsmPdf() {
+  const moo = document.getElementById("rpMoo2").value;
+  let list = asmCache.length ? asmCache : await DB.list("asm");
+  if (moo !== "all") list = list.filter(a => String(a.moo) === String(moo));
+  list = [...list].sort((a, b) => (Number(a.no) || 0) - (Number(b.no) || 0));
+
+  const rowsHtml = list.map((a, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${esc(a.name)}</td>
+      <td>${esc(a.idcard)}</td>
+      <td>${esc(a.houseNo)}</td>
+      <td>หมู่ ${esc(a.moo)}</td>
+      <td>${esc(a.phone)}</td>
+      <td>${esc(a.status)}</td>
+    </tr>`).join("");
+
+  const html = `
+    ${reportHeader("รายงานข้อมูล อสม. ในเขตพื้นที่")}
+    <div class="rp-meta">หมู่บ้าน: ${moo === "all" ? "ทุกหมู่บ้าน" : "หมู่ " + esc(moo)} &nbsp;•&nbsp; จำนวนทั้งหมด ${list.length} คน</div>
+    <table class="rp-table">
+      <thead><tr><th>ลำดับ</th><th>ชื่อ-สกุล</th><th>เลขบัตรประชาชน</th><th>บ้านเลขที่</th><th>หมู่</th><th>เบอร์โทร</th><th>สถานะ</th></tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="7" style="text-align:center;">ไม่มีข้อมูล</td></tr>`}</tbody>
+    </table>
+    <div class="rp-foot"><span>รายงานจากระบบฐานข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า</span><span>หน้า 1/1</span></div>
+  `;
+  await renderToPdf(html, `รายงานข้อมูลอสม-หมู่${moo}.pdf`);
+}
+
+async function exportAttendPdf() {
+  const date = document.getElementById("rpDate3").value;
+  const list = await DB.list("attendance");
+  const rows = list.filter(a => a.date === date).sort((a, b) => (a.moo || "").localeCompare(b.moo || ""));
+  const present = rows.filter(r => r.mode !== "leave").length;
+  const leave = rows.filter(r => r.mode === "leave").length;
+
+  const rowsHtml = rows.map((r, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${esc(r.asmName)}</td>
+      <td>หมู่ ${esc(r.moo)}</td>
+      <td>${r.mode === "self" ? "มาประชุมเอง" : r.mode === "replace" ? "มาประชุมแทน" : "แจ้งลา"}</td>
+      <td>${esc(r.replaceName || "-")}</td>
+    </tr>`).join("");
+
+  const html = `
+    ${reportHeader("รายงานการลงชื่อเข้าร่วมโรงเรียน อสม.")}
+    <div class="rp-meta">วันที่ประชุม: ${isoToThaiDate(date)}</div>
+    <div class="rp-stat-row">
+      <div class="rp-stat"><div class="k">เข้าร่วม</div><div class="v">${present}</div></div>
+      <div class="rp-stat"><div class="k">ลา</div><div class="v">${leave}</div></div>
+      <div class="rp-stat"><div class="k">รวมผู้ลงชื่อ</div><div class="v">${rows.length}</div></div>
+    </div>
+    <table class="rp-table">
+      <thead><tr><th>ลำดับ</th><th>ชื่อ อสม.</th><th>หมู่</th><th>การเข้าร่วม</th><th>ผู้มาแทน</th></tr></thead>
+      <tbody>${rowsHtml || `<tr><td colspan="5" style="text-align:center;">ไม่มีข้อมูลการลงชื่อในวันนี้</td></tr>`}</tbody>
+    </table>
+    <div class="rp-sign">
+      <div class="line">ลงชื่อ ................................................. ผู้บันทึก</div>
+      <div>( ................................................. )</div>
+    </div>
+    <div class="rp-foot"><span>รายงานจากระบบฐานข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า</span><span>หน้า 1/1</span></div>
+  `;
+  await renderToPdf(html, `รายงานลงชื่อเข้าร่วม-${date}.pdf`);
+}
+
+async function exportMeetingPdf() {
+  const id = document.getElementById("rpMeeting4").value;
+  if (!id) { toast("กรุณาเลือกรายงานการประชุม", "err"); return; }
+  const list = await DB.list("meetings");
+  const m = list.find(x => x.id === id);
+  if (!m) return;
+
+  const agendaBlock = (label, text) => `
+    <div class="rp-section-title">${label}</div>
+    <div style="font-size:13px;line-height:1.9;white-space:pre-wrap;padding:0 2px 6px;">${esc(text) || "-"}</div>
+  `;
+
+  const html = `
+    ${reportHeader(m.title || "รายงานการประชุมโรงเรียน อสม.")}
+    <div class="rp-meta">ครั้งที่ ${esc(m.meetingNo || "-")} &nbsp;•&nbsp; วันที่ประชุม ${isoToThaiDate(m.date)}</div>
+    ${agendaBlock("วาระที่ 1 ประธานแจ้งเพื่อทราบ", m.agenda1)}
+    ${agendaBlock("วาระที่ 2 เรื่องทั่วไป", m.agenda2)}
+    ${agendaBlock("วาระที่ 3 เรื่องเสนอพิจารณา", m.agenda3)}
+    ${agendaBlock("วาระที่ 4 เรื่องอื่น ๆ", m.agenda4)}
+    <div class="rp-sign" style="display:flex;justify-content:space-around;margin-top:60px;">
+      <div><div class="line">ลงชื่อ ................................................. ผู้บันทึกรายงานการประชุม</div><div>( ${esc(m.recorder) || "................................................."} )</div></div>
+    </div>
+    <div class="rp-sign" style="display:flex;justify-content:space-around;">
+      <div><div class="line">ลงชื่อ ................................................. ผู้ตรวจรายงานการประชุม</div><div>( ${esc(m.chairman) || "................................................."} )</div></div>
+    </div>
+    <div class="rp-foot"><span>รายงานจากระบบฐานข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า</span><span>หน้า 1/1</span></div>
+  `;
+  await renderToPdf(html, `รายงานการประชุม-${(m.meetingNo || m.date || "")}.pdf`);
+}
+
+
+/* =====================================================================
+   APP CONTROLLER
+   ===================================================================== */
+const PAGE_META = {
+  dashboard: { title: "Dashboard", sub: "ภาพรวมข้อมูลโรงเรียน อสม. รพ.สต.บ้านโคกสง่า" },
+  asm: { title: "ข้อมูล อสม. ในเขตพื้นที่", sub: "บันทึกและค้นหาข้อมูลอาสาสมัครสาธารณสุขประจำหมู่บ้าน" },
+  attend: { title: "ลงชื่อเข้าร่วม รร.", sub: "บันทึกการลงชื่อเข้าร่วมโรงเรียน อสม. รายวัน" },
+  meeting: { title: "บันทึกรายงานการประชุม", sub: "บันทึกวาระและรายละเอียดการประชุมโรงเรียน อสม." },
+  report: { title: "ออกรายงาน", sub: "ออกรายงานเป็นไฟล์ PDF จัดหน้าอย่างเป็นทางการ" }
+};
+
+async function goToPage(name) {
+  document.querySelectorAll(".nav-item").forEach(n => n.classList.toggle("active", n.dataset.page === name));
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.getElementById("page-" + name).classList.add("active");
+  document.getElementById("pageTitle").textContent = PAGE_META[name].title;
+  document.getElementById("pageSub").textContent = PAGE_META[name].sub;
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("scrim").classList.remove("show");
+
+  if (name === "dashboard") await renderDashboard();
+  else if (name === "asm") await renderAsmPage();
+  else if (name === "attend") await renderAttendPage();
+  else if (name === "meeting") await renderMeetingPage();
+  else if (name === "report") await renderReportPage();
+}
+
+document.querySelectorAll(".nav-item").forEach(item => {
+  item.addEventListener("click", () => goToPage(item.dataset.page));
+});
+
+document.getElementById("menuBtn").addEventListener("click", () => {
+  document.getElementById("sidebar").classList.add("open");
+  document.getElementById("scrim").classList.add("show");
+});
+document.getElementById("scrim").addEventListener("click", () => {
+  document.getElementById("sidebar").classList.remove("open");
+  document.getElementById("scrim").classList.remove("show");
+});
+
+async function initApp() {
+  const dot = document.getElementById("connDot");
+  const text = document.getElementById("connText");
+  if (!FIREBASE_ENABLED) {
+    document.getElementById("setupBanner").classList.add("show");
+    dot.classList.add("off");
+    text.textContent = "โหมดชั่วคราว (ยังไม่ได้เชื่อมต่อ Firebase)";
+  }
+  try {
+    await DB.init();
+    if (FIREBASE_ENABLED) {
+      dot.classList.add("on");
+      text.textContent = "เชื่อมต่อ Firebase แล้ว";
+    }
+  } catch (e) {
+    console.error(e);
+    dot.classList.add("off");
+    text.textContent = "เชื่อมต่อไม่สำเร็จ";
+  }
+
+  await DB.seedIfEmpty("asm", ASM_SEED);
+  await goToPage("dashboard");
+}
+
+initApp();
+
+</script>
+</body>
+</html>
 
